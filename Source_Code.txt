@@ -1,0 +1,1451 @@
+Local_Client:-
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+
+public class Local_Client implements Runnable   
+{ 
+    BlockingQueue<String> incoming_queue;   
+    String rline=null;								// Variable declaration.
+    static long id=0;
+    static String file_name=null;
+    static long start_Time=0;
+    static long end_Time=0;   
+    public Local_Client(BlockingQueue<String> q)  // Parameterized constructor declaration.
+    {
+        this.incoming_queue=q;					// get incoming queue. 
+    }
+    // This method will insert job in incoming queue.
+    public void input_jobs_in_queue()	
+    {
+    	try 
+    	{		
+    		FileReader fr=new FileReader(file_name);		
+    		BufferedReader br=new BufferedReader(fr);
+    		while((rline=br.readLine())!=null)		// Read job from file and put it in queue.
+    		{									                     
+               // Thread.sleep(i);
+            	id++;
+    			//incoming_queue.add(id+" "+rline);            	
+            	incoming_queue.put(id+" "+rline);		// Put it in queue.
+               // System.out.println("Produced "+id+" "+rline);                    
+    		}
+		br.close();									// Close file.
+        //adding exit message              
+            incoming_queue.put("Stop");				
+        } 
+    	catch (InterruptedException e) 		// Exception Handling
+    	{
+            e.printStackTrace();
+        }
+		catch (Exception e) 
+		{
+			e.printStackTrace();
+		}
+}
+    public void run() 				// Run method for thread.
+    {
+    	System.out.println("Local Client started !!!");
+    	input_jobs_in_queue();    	        
+    }
+    public static void main(String[] args) 	// Main method.
+    {  	 
+    	try
+    	{
+		int no_of_threads=Integer.parseInt(args[3]);			// Threads count
+		String rline=null;
+		file_name=args[5];
+        //Creating BlockingQueue of size 10
+		// Incoming and response queue declaration.
+        BlockingQueue<String> incoming_queue = new ArrayBlockingQueue<>(10000);
+        BlockingQueue<String> response_queue = new ArrayBlockingQueue<>(10000);
+	start_Time   = System.currentTimeMillis();		// Start timer.
+        Local_Client l_client = new Local_Client(incoming_queue);
+        Local_Worker l_worker = new Local_Worker(incoming_queue,response_queue,no_of_threads);
+        //starting l_client to produce messages in incoming_queue
+        
+        
+        new Thread(l_client).start();
+        //Local_Worker consume=new Local_Worker(incoming_queue);
+        l_worker.create_worker_threads(l_worker);   
+        
+        // Check if any other job left to execute.
+        while(response_queue.remainingCapacity()!=0)
+        {     
+        }
+        
+        int cnt=0;
+        cnt=response_queue.size();
+        int j=0,success=0,failure=0;
+        
+        // Check if there are any failures
+        while(j<cnt)
+        {
+        	 j++;
+        	 rline=response_queue.take();
+        	 if((rline.substring(rline.indexOf(" ")+1)=="1"))        	 
+        		 failure++;        	 // Failure counter
+        	 else
+        		 success++;			// Success counter 
+		//System.out.println("J:- "+j+"cnt:- "+cnt);
+        }
+        end_Time = System.currentTimeMillis();		// Stop timer.      
+        System.out.println("Records Failed to process:- "+failure);
+        System.out.println("Records Successfully processed:- "+success);
+        if(success==j)    
+        	System.out.println("All Records Processed Successfully !!!");
+        
+        long total_Time = end_Time - start_Time;			// Count execution time.			
+		System.out.println("Start time is:- "+start_Time);			
+		System.out.println("Total Time taken for execution (In Milliseconds):- "+total_Time);  
+        
+    	}
+    	// Exception handling.
+    	catch(Exception e)
+    	{    		
+    	}
+    } 
+}
+
+Local_Worker:-
+import java.util.concurrent.BlockingQueue;
+ 
+public class Local_Worker implements Runnable   // Create local worker.
+{
+ String s1=null;
+ BlockingQueue<String> incoming_queue;		// Queue declaration
+ BlockingQueue<String> response_queue;
+ private int no_of_threads=0;
+     
+	public Local_Worker()			// Constructor declaration.
+	{	
+	}
+	// Get incoming_queue,response_queue and no_of_threads as parameter.
+    public Local_Worker(BlockingQueue<String> in_q,BlockingQueue<String> res_q,int no_of_threads)
+    {
+        this.incoming_queue=in_q;
+        this.response_queue=res_q;
+        this.no_of_threads=no_of_threads;
+    }  
+    // This method will create worker threads.
+    public void create_worker_threads(Local_Worker consumer)
+    {
+    	for(int i=1;i<=no_of_threads;i++)
+    	{    		    	
+    		new Thread(consumer).start();    		    	
+    	}
+    }
+    // This method will be called by all threads and will execute the jobs.  
+    public void run() 
+    {
+    	String rline=null;
+    	System.out.println("Local Worker started !!!");
+        try
+        {           
+            //execute jobs until Stop message is received
+            while((rline = incoming_queue.take())!="Stop")
+            {
+            	s1=rline.substring(rline.indexOf("(")+1,rline.indexOf(")"));				
+				//System.out.println(thread_name+" "+s1);
+            	// Execute sleep job.
+				Thread.sleep(Integer.parseInt(s1));
+				response_queue.put(rline.substring(0,rline.indexOf(" "))+" "+0);
+				//System.out.println("ID is:-"+rline.substring(0,rline.indexOf(" "))+"x");				
+            }
+		System.out.println("Worker execution complete !!!");
+        }
+        catch(InterruptedException e) // Exception handling.
+        {   
+        	try
+        	{
+        		// If failure insert 1 in response queue.
+        		response_queue.put(rline.substring(0,rline.indexOf(" "))+" "+1);
+        	}
+        	catch(InterruptedException e1)  // Exception handling.
+        	{
+        		e1.printStackTrace();
+        	}        
+            e.printStackTrace();
+        }
+    }
+}
+Client:-
+import java.io.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.auth.profile.ProfilesConfigFile;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.model.GetQueueAttributesRequest;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.GetQueueUrlResult;
+import com.amazonaws.services.sqs.model.SendMessageRequest;
+
+class Client extends Thread
+{	
+	String thread_name=null;
+	static long id=0;
+	static String workload_file=null;
+	static String queue_name=null;
+	static String credentils_file=null;
+	static long start_Time=0;
+	static long end_Time=0;
+	String message_body=null;
+	static AmazonDynamoDBClient connect_dynamoDB;
+	Client()								// default constructor.
+	{
+	}
+	Client(String thread_name)				// Parameterized constructor.
+	{
+		this.thread_name=thread_name;	
+	}
+	public synchronized void insert_in_SQS() // This method will insert jobs in SQS queue.
+	{
+		AWSCredentials get_credentials = null;		
+        try 
+        {
+        	// Get credentials.
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+        	// connect to queue.
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();
+        } 
+        catch (Exception e) 		// Exception hadling.
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        AmazonSQS connect_Sqs = new AmazonSQSClient(get_credentials);  // Connect to sqs.
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_Sqs.setRegion(us_West2);
+        
+        System.out.println("-----Getting Started with Amazon SQS-----\n");
+
+        try 
+        {
+            // Create a incoming queue
+            System.out.println("Connecting Incoming Queue.");
+          // CreateQueueRequest queue_Request = new CreateQueueRequest(queue_name);
+            
+            GetQueueUrlResult incoming_Queue_Result = connect_Sqs.getQueueUrl(queue_name);
+            String incoming_Queue_Url =incoming_Queue_Result.getQueueUrl();                                            
+            System.out.println(queue_name+" Url is:- "+incoming_Queue_Url);
+            
+            // Create response queue.
+            System.out.println("\nConnecting Response Queue.");
+            GetQueueUrlResult response_Queue_Result = connect_Sqs.getQueueUrl("Response_Queue");
+            String response_Queue_Url =response_Queue_Result.getQueueUrl();                                                      
+            System.out.println("Response_Queue Url is:- "+response_Queue_Url); 
+            
+            // Read workload file.
+            FileReader fr=new FileReader(workload_file);
+			BufferedReader br=new BufferedReader(fr);		
+			//System.out.println("Enter the number of threads to create:- ");			
+			String rline=null;
+		
+			System.out.println("Sending messages to "+queue_name+"\n");            
+			start_Time   = System.currentTimeMillis();		// Start timer.
+			while((rline=br.readLine())!=null)
+			{
+				id++;
+				connect_Sqs.sendMessage(new SendMessageRequest(incoming_Queue_Url, id+" "+rline));	
+				//System.out.println(rline);
+			}	
+			//connect_Sqs.sendMessage(new SendMessageRequest(incoming_Queue, 9999999+" "+"Exit(0)"));
+			br.close();
+			
+			// Reading number of messages in queue.
+			GetQueueAttributesRequest requester = new GetQueueAttributesRequest();
+	        requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+	        
+	        //int max = 25;
+   
+	        requester = requester.withQueueUrl(response_Queue_Url);
+
+	        Map<String, String> attrs_Map = connect_Sqs.getQueueAttributes(requester).getAttributes();
+
+	        // get the approximate number of messages in the queue
+	        int messages_in_queue = Integer.parseInt(attrs_Map.get("ApproximateNumberOfMessages"));
+	        //System.out.println("Queue Size is:- "+messages_in_queue);    
+			System.out.println("Checking if execution is completed !!!!");
+	        while((messages_in_queue)<id)					// while all the messages finished execution.
+	        {
+	            sleep(10);
+	            requester = new GetQueueAttributesRequest();
+		        requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+		        
+		        //int max = 25;	   
+		        requester = requester.withQueueUrl(response_Queue_Url);
+		        attrs_Map = connect_Sqs.getQueueAttributes(requester).getAttributes();
+		        // get the number of messages in the queue.
+		        
+		        messages_in_queue = Integer.parseInt(attrs_Map.get("ApproximateNumberOfMessages"));		        
+		        //System.out.println(messages_in_queue+"Checking Response Queue !!!!");
+	        }  
+	        end_Time   = System.currentTimeMillis();		// Stop timer.
+	        if((messages_in_queue)==id)			// Check if incoming messages and outgoing messages count.
+	        {
+	        	System.out.println("All Messages Processed !!!");
+	        }
+	        else						
+	        {
+	        	//System.out.println((messages_in_queue)+"Few Messages Not Processed !!!");
+	        }	        
+           // System.out.println("Deleting both queues.\n");
+            //connect_Sqs.deleteQueue(new DeleteQueueRequest(incoming_Queue));
+            //connect_Sqs.deleteQueue(new DeleteQueueRequest(response_Queue_Url));            
+            
+            System.out.println("Execution Complete !!!");            
+        	}
+        
+        catch(Exception e)					// Exception handling.
+        {
+        		e.printStackTrace();
+        }
+        }
+	 
+	public static void main(String args[]) throws Exception   	// main method.
+	{			
+		try
+		{	
+			queue_name=args[1];							// Queue Name.
+			
+			Path currentRelativePath = Paths.get("");
+			String current_working_directory = currentRelativePath.toAbsolutePath().toString();			
+			
+			workload_file =current_working_directory+"/"+args[3];		// Workload file location.
+			credentils_file=current_working_directory+"/credentials";
+						
+			Client lc=new Client();
+			//lc.execute_DynamoDB();
+			lc.insert_in_SQS();			
+			long total_Time = end_Time - start_Time;			// Count execution time.			
+			System.out.println("Start time is:- "+start_Time);			
+			System.out.println("Total Time taken for execution (In Milliseconds)"+total_Time);  		
+		}	
+		catch(Exception e)
+		{
+			e.printStackTrace();
+		}
+	}
+}
+Worker:-
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.services.sqs.model.GetQueueUrlResult;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.auth.profile.ProfilesConfigFile;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.model.AttributeValue;
+import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
+import com.amazonaws.services.dynamodbv2.model.Condition;
+import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
+import com.amazonaws.services.dynamodbv2.model.PutItemResult;
+import com.amazonaws.services.dynamodbv2.model.ScanRequest;
+import com.amazonaws.services.dynamodbv2.model.ScanResult;
+import com.amazonaws.services.dynamodbv2.util.Tables;
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.DeleteMessageRequest;
+import com.amazonaws.services.sqs.model.Message;
+import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
+import com.amazonaws.services.sqs.model.GetQueueAttributesRequest;
+import com.amazonaws.services.sqs.model.SendMessageRequest;
+import com.amazonaws.services.sqs.model.QueueDoesNotExistException;
+class Worker extends Thread									// Worker class declaration.
+{	
+	String thread_name=null,Qname=null;
+	static long id=0;
+	static String credentils_file=null;
+	static AmazonDynamoDBClient connect_DynamoDB;
+	Worker()
+	{
+	}
+	Worker(String thread_name,String Qname)						// Parameterized Constructor.
+	{
+		this.thread_name=thread_name;
+		this.Qname=Qname;
+	}
+	private synchronized static void initializer() throws Exception  		// get get_credentials. 
+	{    
+        AWSCredentials get_credentials = null;
+        try 
+        {
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+        } 
+        catch (Exception e) 
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your credentials file is at the correct location",
+                    e);
+        }
+        connect_DynamoDB = new AmazonDynamoDBClient(get_credentials);
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_DynamoDB.setRegion(us_West2);
+    }
+	synchronized public void run()											// This method is called by every thread.
+	{		
+		try
+		{			
+			execute_jobs();
+		}			
+		catch(Exception e)
+		{			
+			e.printStackTrace();
+		}
+	}	
+	public synchronized void  execute_jobs() throws Exception			// This method will put message in SQS queue and execute them	
+	{
+		// Connect All Queues				
+		AWSCredentials get_credentials = null;
+        try 
+        {
+        	// Get the AWS credentials.
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+        } 
+        catch (Exception e) 		// Exception Handling.
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your credentials file is at the correct location" ,
+                    e);
+        }
+        try
+        {
+        String table_Name="Job_Id_Check";			// DynamoDB table name.
+        
+        //Map<String, AttributeValue> dynamoDB_Item;
+
+        AmazonSQS connect_Sqs = new AmazonSQSClient(get_credentials);	
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_Sqs.setRegion(us_West2);
+        
+        // Connect to incoming queue.
+        //System.out.println("Connecting Amazon SQS.\n");  	              
+        System.out.println(thread_name+" Connecting to "+Qname+" Queue");
+        GetQueueUrlResult incoming_Queue_Result = connect_Sqs.getQueueUrl(Qname);
+        String incoming_Queue_Url =incoming_Queue_Result.getQueueUrl();
+       // System.out.println(Qname+" Url is:- "+incoming_Queue_Url);
+      
+        //Connect to Response_Queue.
+		System.out.println(thread_name+" Connecting to Response_Queue !!");
+		GetQueueUrlResult response_Queue_Result = connect_Sqs.getQueueUrl("Response_Queue");
+	    String response_Queue_Url =response_Queue_Result.getQueueUrl();
+	    //System.out.println("Response_Queue Url is:- "+response_Queue_Url);
+		
+	    //Connect to DynamoDB.
+	    System.out.println(thread_name+" Connecting to DynamoDB !!");
+	    initializer();
+	    Map<String, AttributeValue> dynamoDB_Item;
+        PutItemRequest dynamoDB_Put_Item_Request;
+        PutItemResult dynamoDB_Put_Item_Result;
+        //System.out.println("Result: " + dynamoDB_Put_Item_Result);
+        GetQueueAttributesRequest requester = new GetQueueAttributesRequest();
+        requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+        
+        //int max = 25;
+        HashMap<String, Condition> dynamoDB_Scan_Filter;
+        Condition dynamoDB_Condition;
+        ScanRequest dynamoDB_Scan_Request;
+        ScanResult dynamoDB_Scan_Result;
+        String message_Receipt_Handle;
+        ReceiveMessageRequest message_Request;
+        List<Message> messages_Text;
+        int id_cmd;
+        String Id_of_command;
+        String Command_str;
+        int val;
+        String s1=null;
+
+        requester = requester.withQueueUrl(incoming_Queue_Url);
+        String message_body=null;
+        Map<String, String> attrs_Map = connect_Sqs.getQueueAttributes(requester).getAttributes();
+        
+        // get the approximate number of messages_Text in the queue
+        int messages_in_queue = Integer.parseInt(attrs_Map.get("ApproximateNumberOfMessages"));
+        System.out.println(thread_name +" Started Processing Records !!!");
+        while(true)					// execute while there are messages in queue.
+        {
+        	while((messages_in_queue)==0)
+        	{
+        		Thread.sleep(10);
+        		requester = new GetQueueAttributesRequest();
+                requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+                requester = requester.withQueueUrl(incoming_Queue_Url);            
+                attrs_Map = connect_Sqs.getQueueAttributes(requester).getAttributes();            
+                // get the approximate number of messages_Text in the queue
+                messages_in_queue = Integer.parseInt(attrs_Map.get("ApproximateNumberOfMessages"));
+        	}
+        	if((messages_in_queue)>0)
+        	{
+        		
+        	message_Request = new ReceiveMessageRequest(incoming_Queue_Url);
+            messages_Text = connect_Sqs.receiveMessage(message_Request).getMessages();
+            for (Message message : messages_Text) {
+               // System.out.println("  Message");
+                //System.out.println("    MessageId:     " + message.getMessageId());
+                //System.out.println("    ReceiptHandle: " + message.getReceiptHandle());
+                //System.osleep(100);ut.println("    MD5OfBody:     " + message.getMD5OfBody());
+                message_body=message.getBody();
+              //  System.out.println("    Body:          " + message_body);
+               // for (Entry<String, String> entry : message.getAttributes().entrySet()) {
+                  //  System.out.println("  Attribute");
+                   // System.out.println("    Name:  " + entry.getKey());
+                   // System.out.println("    Value: " + entry.getValue());
+               // }
+            }                                   
+            // Separate Id and message.
+            Id_of_command = message_body.substring(0,message_body.indexOf(" "));
+            id_cmd=Integer.parseInt(Id_of_command);
+            Command_str=message_body.substring(message_body.indexOf(" "));
+            //System.out.println("Id is"+id_cmd+"command"+Command_str);
+                        
+            // Check in dynamoDB is Id already present.
+            dynamoDB_Scan_Filter = new HashMap<String, Condition>();
+            dynamoDB_Condition = new Condition()
+                .withComparisonOperator(ComparisonOperator.EQ.toString())
+                .withAttributeValueList(new AttributeValue().withN(Id_of_command));
+            dynamoDB_Scan_Filter.put("Id", dynamoDB_Condition);
+            dynamoDB_Scan_Request = new ScanRequest(table_Name).withScanFilter(dynamoDB_Scan_Filter);
+            dynamoDB_Scan_Result = connect_DynamoDB.scan(dynamoDB_Scan_Request);
+                        
+           // System.out.println("DynamoDb check "+ dynamoDB_Scan_Result);
+            val=dynamoDB_Scan_Result.getCount();
+           // System.out.println("Records Found "+val);
+            
+            // If Id already present in DynamoDB then dont execute that command else insert the id in dynamoDB and execute them.             
+            if(val==0)
+            {               
+            	s1=Command_str.substring(Command_str.indexOf("(")+1,Command_str.indexOf(")"));				
+				//System.out.println(thread_name+" "+s1);	            	
+            	message_Receipt_Handle = messages_Text.get(0).getReceiptHandle();
+            	connect_Sqs.deleteMessage(new DeleteMessageRequest(incoming_Queue_Url, message_Receipt_Handle));
+            	
+            	dynamoDB_Item = insert_Item(id_cmd,Command_str);
+                dynamoDB_Put_Item_Request = new PutItemRequest(table_Name, dynamoDB_Item);
+                dynamoDB_Put_Item_Result = connect_DynamoDB.putItem(dynamoDB_Put_Item_Request);
+                Thread.sleep(Integer.parseInt(s1));
+                connect_Sqs.sendMessage(new SendMessageRequest(response_Queue_Url,Id_of_command +" 0" ));
+                // System.out.println("Result: " + dynamoDB_Put_Item_Result);                                                                           	                           	
+            }            
+            // Get number of messages in queue.
+            requester = new GetQueueAttributesRequest();
+            requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+            requester = requester.withQueueUrl(incoming_Queue_Url);            
+            attrs_Map = connect_Sqs.getQueueAttributes(requester).getAttributes();            
+            // get the approximate number of messages_Text in the queue
+            messages_in_queue = Integer.parseInt(attrs_Map.get("ApproximateNumberOfMessages"));
+           // System.out.println(messages_in_queue);
+        	}
+        	}        	     
+        }
+        catch(IndexOutOfBoundsException iobe)			// Exception Handling.
+        {
+        	//iobe.printStackTrace();
+        	//System.out.println("IndexOutOfBoundsException");
+        }
+        catch(QueueDoesNotExistException qdne)			// Exception Handling.
+        {        
+        }
+	}	
+	private synchronized static Map<String, AttributeValue> insert_Item(int Id, String Command)  // Insert record in dynamoDB.
+	{
+        Map<String, AttributeValue> dynamoDB_Item = new HashMap<String, AttributeValue>();
+        dynamoDB_Item.put("Id", new AttributeValue(Integer.toString(Id)));
+        dynamoDB_Item.put("Command", new AttributeValue(Command));        
+        return dynamoDB_Item;
+    }
+	public static void main(String args[]) throws Exception
+	{	
+		Thread t[]=new Thread[20];
+		int no_of_threads=Integer.parseInt(args[3]);
+		//System.out.println("no_of_threads "+no_of_threads+args[2]+"Incoming_Queue");
+		Path currentRelativePath = Paths.get("");
+		String current_working_directory = currentRelativePath.toAbsolutePath().toString();
+		credentils_file=current_working_directory+"/credentials";
+		try
+		{			
+			for(int i=1;i<=no_of_threads;i++)
+			{
+				t[i]=new Worker("Thread"+i,args[1]);			// Create thread.
+				t[i].start(); 
+			}
+			for (int i=1;i<=no_of_threads;i++) 							// Wait till all files send to slaves.
+			{
+				t[i].join();											// wait till thread completes its execution.
+			}	
+			//System.out.println("All Records Processed !!!");
+		}	
+		catch(Exception e)										// Exception Handling.
+		{
+			e.printStackTrace();
+		}
+	}
+}
+Create_Queue
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.auth.profile.ProfilesConfigFile;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
+import com.amazonaws.services.dynamodbv2.model.CreateTableRequest;
+import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
+import com.amazonaws.services.dynamodbv2.model.KeyType;
+import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughput;
+import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
+import com.amazonaws.services.dynamodbv2.model.TableDescription;
+import com.amazonaws.services.dynamodbv2.util.Tables;
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.CreateQueueRequest;
+Create_Queue :-
+
+public class Create_Queue 
+{
+	static Path currentRelativePath = Paths.get("");
+	static String current_working_directory = currentRelativePath.toAbsolutePath().toString();			
+	static String credentils_file=current_working_directory+"/credentials";
+	static AmazonDynamoDBClient connect_dynamoDB;
+	private static void initializer() throws Exception  // This method will initialize dynamoDB get_credentials. 
+	{       
+        AWSCredentials get_credentials = null;
+        try 
+        {
+        	// Get the location of credentials file.
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+        	// read access_key and secrete key from credentials file.
+        	get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+        } 
+        catch (Exception e) 						/// Exception handling.
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        connect_dynamoDB = new AmazonDynamoDBClient(get_credentials);	/// Connect to dynamoDB.
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_dynamoDB.setRegion(us_West2);
+        execute_DynamoDB();
+    }
+	public static void execute_DynamoDB() throws Exception    /// This method will create table Job_Id_Check in dynamoDB. 
+	{
+		//initializer();
+		System.out.println("Creating Table !!!");
+        try 
+        {
+            String tableName = "Job_Id_Check";
+
+            // Check if table exist if not create it.
+            if (Tables.doesTableExist(connect_dynamoDB, tableName)) 
+            {
+                System.out.println("Table " + tableName + " is already ACTIVE");
+            } 
+            else 
+            {
+                // Create a table 
+                CreateTableRequest create_Table = new CreateTableRequest().withTableName(tableName)
+                    .withKeySchema(new KeySchemaElement().withAttributeName("Id").withKeyType(KeyType.HASH))
+                    .withAttributeDefinitions(new AttributeDefinition().withAttributeName("Id").withAttributeType(ScalarAttributeType.S))
+                    .withProvisionedThroughput(new ProvisionedThroughput().withReadCapacityUnits(10000L).withWriteCapacityUnits(10000L));
+                    TableDescription table_Description = connect_dynamoDB.createTable(create_Table).getTableDescription();
+                System.out.println("Created Table: " + table_Description);
+
+                // Wait for it to become active
+                System.out.println("Waiting for " + tableName + " to become Live...");                
+            }            
+            // Describe table.
+            //DescribeTableRequest describe_Table = new DescribeTableRequest().withTableName(tableName);
+            //TableDescription table_Description = connect_dynamoDB.describeTable(describe_Table).getTable();
+            //System.out.println("Table Description is: " + table_Description);
+            System.out.println("Table Created !!!");
+        } 
+        catch (AmazonServiceException ase) 		// Exception handling.
+        {
+            System.out.println("Caught an AmazonServiceException, which means your request made it "
+                    + "to AWS, but was rejected with an error response for some reason.");            
+        } 
+        catch (AmazonClientException ace) 
+        {
+            System.out.println("Caught an AmazonClientException, which means the client encountered "
+                    + "a serious internal problem while trying to communicate with AWS");
+            System.out.println("Error Message: " + ace.getMessage());
+        }
+        }
+	public static void main(String args[]) throws Exception
+	{
+		//String queue_name=args[0];
+		String queue_name=args[0];
+		Path currentRelativePath = Paths.get("");
+		String current_working_directory = currentRelativePath.toAbsolutePath().toString();			
+		String credentils_file=current_working_directory+"/credentials";
+		AWSCredentials get_credentials = null;
+		String message_Receipt_Handle;
+        try 
+        {
+        	// Get credentials.
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+        	// connect to queue.
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();
+        } 
+        catch (Exception e) 		// Exception hadling.
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        System.out.println("Connecting");
+        AmazonSQS connect_Sqs = new AmazonSQSClient(get_credentials);  // Connect to sqs.
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_Sqs.setRegion(us_West2);        
+        initializer();
+        
+        System.out.println("Creating "+args[0]);
+        CreateQueueRequest queue_Request = new CreateQueueRequest(queue_name);
+        String incoming_Queue = connect_Sqs.createQueue(queue_Request).getQueueUrl();
+        System.out.println(queue_name+" Url is:- "+incoming_Queue);
+        
+        // Create response queue.
+        System.out.println("\nCreating Response Queue.");
+        CreateQueueRequest response_Queue_Request = new CreateQueueRequest("Response_Queue");
+        String response_Queue_Url = connect_Sqs.createQueue(response_Queue_Request).getQueueUrl();
+        System.out.println("Response_Queue Url is:- "+response_Queue_Url);  
+        
+        System.out.println("DynamoDB table and Queue successfully created !!!");
+	}
+}
+Delete_Queue
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.auth.profile.ProfilesConfigFile;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.GetQueueUrlResult;
+import com.amazonaws.services.sqs.model.DeleteQueueRequest;
+
+
+public class Delete_Queue 
+{
+	public static void main(String args[]) throws Exception
+	{
+		//String queue_name=args[0];
+		String queue_name=args[0];
+		Path currentRelativePath = Paths.get("");
+		String current_working_directory = currentRelativePath.toAbsolutePath().toString();			
+		String credentils_file=current_working_directory+"/credentials";
+		AWSCredentials get_credentials = null;
+		String message_Receipt_Handle;
+       System.out.println("Connecting");
+		try 
+        {
+        	// Get credentials.
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+        	// connect to queue.
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();
+        } 
+        catch (Exception e) 		// Exception hadling.
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        AmazonSQS connect_Sqs = new AmazonSQSClient(get_credentials);  // Connect to sqs.
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_Sqs.setRegion(us_West2);
+        
+        System.out.println("Deleting "+args[0]);
+        GetQueueUrlResult incoming_Queue_Result = connect_Sqs.getQueueUrl(queue_name);
+        String incoming_Queue_Url =incoming_Queue_Result.getQueueUrl();        
+        connect_Sqs.deleteQueue(new DeleteQueueRequest(incoming_Queue_Url));
+        
+        System.out.println("Deleting Response_Queue");
+        GetQueueUrlResult response_Queue_Result = connect_Sqs.getQueueUrl("Response_Queue");
+	    String response_Queue_Url =response_Queue_Result.getQueueUrl();
+        connect_Sqs.deleteQueue(new DeleteQueueRequest(response_Queue_Url));           
+        
+        System.out.println("Queue Deleted Successfully !!!");
+	}
+}
+
+Input_File_Creator:-
+import java.nio.file.Path;
+import java.io.*;
+import java.nio.file.Paths;
+
+public class Input_File_Creator
+{
+	public static void main(String args[]) throws Exception
+	{
+	int i=1;
+	File f =new File("Animoto_Workload.txt");
+	FileWriter fw=new FileWriter("Animoto_Workload.txt");
+	BufferedWriter br =new BufferedWriter(fw);
+	Path currentRelativePath = Paths.get("");
+	String current_working_directory = currentRelativePath.toAbsolutePath().toString();	
+	while(i<160)
+	{
+		i++;
+		br.write(current_working_directory+"/Image_Link.txt");
+		br.newLine();
+	}
+	br.close();
+	}
+}
+Workload_File_Creator:-
+import java.io.*;
+import java.nio.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+public class Workload_File_Creator 
+{
+public static void main(String args[]) throws Exception
+{
+	Path currentRelativePath = Paths.get("");
+	String current_working_directory = currentRelativePath.toAbsolutePath().toString();	
+	
+	DataInputStream dis=new DataInputStream(System.in);
+	File f =new File(current_working_directory+"/Workload.txt");
+	FileWriter fw=new FileWriter(current_working_directory+"/Workload.txt");
+	BufferedWriter bw=new BufferedWriter(fw);
+	
+	System.out.println("Enter number of sleep jobs to create:- ");
+	int sleep_task=Integer.parseInt(dis.readLine());
+	System.out.println("Enter the sleep time for job (milliseconds):- ");
+	int sleep_time=Integer.parseInt(dis.readLine());
+	
+	for (int i=1;i<=sleep_task;i++)
+	{
+		bw.write("Thread."+"sleep("+sleep_time+");");
+		bw.newLine();
+	}
+	bw.close();	
+}
+
+}
+
+Animoto_Client:-
+
+import java.util.*;
+import java.io.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import com.amazonaws.auth.profile.*;
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.model.*;
+/*import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
+import com.amazonaws.services.dynamodbv2.model.CreateTableRequest;
+import com.amazonaws.services.dynamodbv2.model.DescribeTableRequest;
+import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
+import com.amazonaws.services.dynamodbv2.model.KeyType;
+import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughput;
+import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
+import com.amazonaws.services.dynamodbv2.model.TableDescription;*/
+import com.amazonaws.services.dynamodbv2.util.Tables;
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.model.GetQueueAttributesRequest;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.CreateQueueRequest;   
+import com.amazonaws.services.sqs.model.SendMessageRequest;
+
+class Animoto_Client extends Thread     
+{
+	String thread_name=null;                                                      
+	static String file_name=null;
+	static long id=0;
+	int No_of_jobs=11;
+	static String credentils_file=null;
+	static AmazonDynamoDBClient dynamoDB_client;
+	static String Qname=null;
+	static long start_Time=0;
+	static long end_Time=0;
+	Animoto_Client()
+	{
+	}
+	Animoto_Client(String thread_name)
+	{
+		this.thread_name=thread_name;	
+	}
+	private static void initializer() throws Exception   // Get the get_credentials  
+	{       
+        AWSCredentials get_credentials = null;			
+        try 
+        {
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+        } 
+        catch (Exception e) 
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please check that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        dynamoDB_client = new AmazonDynamoDBClient(get_credentials);
+        Region US_WEST2 = Region.getRegion(Regions.US_WEST_2);
+        dynamoDB_client.setRegion(US_WEST2);
+    }
+	public void execute_DynamoDB() throws Exception
+	{
+		initializer();
+		System.out.println("Creating Table !!!");
+        try {
+            String table_Name = "Animoto_Job_Id";
+            
+            					// Create table if it does not exist
+            if (Tables.doesTableExist(dynamoDB_client, table_Name)) 
+            {
+                System.out.println("Table " + table_Name + " is already Present");
+            } 
+            else 
+            {          
+            	// Create table request
+                CreateTableRequest table_Creator = new CreateTableRequest().withTableName(table_Name) // Create table 
+                    .withKeySchema(new KeySchemaElement().withAttributeName("Id").withKeyType(KeyType.HASH))
+                    .withAttributeDefinitions(new AttributeDefinition().withAttributeName("Id").withAttributeType(ScalarAttributeType.S))
+                    .withProvisionedThroughput(new ProvisionedThroughput().withReadCapacityUnits(1L).withWriteCapacityUnits(1L));
+                    TableDescription Table_Description = dynamoDB_client.createTable(table_Creator).getTableDescription();
+                System.out.println("Created Table: " + Table_Description);
+                
+                System.out.println("Waiting for " + table_Name + " to become Live !!!");
+                Tables.awaitTableToBecomeActive(dynamoDB_client, table_Name);
+            } 
+            	/// New table description.
+            DescribeTableRequest describe_Table_Request = new DescribeTableRequest().withTableName(table_Name);
+            TableDescription table_Description = dynamoDB_client.describeTable(describe_Table_Request).getTable();
+            System.out.println("Table Description:- " + table_Description);
+            System.out.println("Table Created !!!");
+        } 
+        catch (AmazonServiceException ase)           // exception handling
+        {
+            System.out.println("Your request To create table rejected !!!");           
+        } 
+        catch (AmazonClientException ace) 	 // exception handling
+        {
+            System.out.println("Caught an AmazonClientException, means the client encountered "
+                    + "a serious internal problem while trying to communicate with AWS");
+            System.out.println("Error Message: " + ace.getMessage());
+        }
+        }
+		public void insert_in_SQS()     // Insert jobs in SQS.
+		{
+			AWSCredentials get_credentials = null; 		// Create AWSCredentials object.
+			try 
+			{
+				// Create ProfilesConfigFile object and get credentials.
+				ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+	            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+			} 
+			catch (Exception e) 			/// Exception handling.
+			{
+				throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+			}
+			// Create AmazonSQS object to connect to SQS 	
+			AmazonSQS connect_Sqs = new AmazonSQSClient(get_credentials);  
+			Region US_WEST2 = Region.getRegion(Regions.US_WEST_2);
+			connect_Sqs.setRegion(US_WEST2);
+			
+			System.out.println("-----Connecting to Amazon SQS-----\n");
+        try 
+        {
+            // Create a Workload Queue.
+            System.out.println("Creating "+ Qname +".\n");
+            CreateQueueRequest queue_Request = new CreateQueueRequest(Qname);
+            String Input_Queue_Url = connect_Sqs.createQueue(queue_Request).getQueueUrl();
+            System.out.println("Url is:- "+Input_Queue_Url);
+            
+            // Create Response Queue.
+            System.out.println("Creating Animoto_Response_Queue.\n");
+            CreateQueueRequest response_Queue_Request = new CreateQueueRequest("Animoto_Response_Queue");
+            String response_Queue_Url = connect_Sqs.createQueue(response_Queue_Request).getQueueUrl();
+            System.out.println("Url is:- "+response_Queue_Url);
+            
+            //FileReader fr=new FileReader("/home/sujay/workspace/S3_Samples/src/Workload.txt");
+			//BufferedReader br=new BufferedReader(fr);			
+			//System.out.println("Enter the number of threads to create:- ");						
+		
+			System.out.println("Sending a messages to "+Qname+".\n");            
+            id=1;
+            start_Time   = System.currentTimeMillis();		// Start timer.
+            // Read Workload file and put jobs in SQS Queue.
+            FileReader fr=new FileReader(file_name);
+            BufferedReader br=new BufferedReader(fr);  
+			while(id<No_of_jobs)						// Read All Jobs.
+			{					
+				// Put messages in Queue.
+				connect_Sqs.sendMessage(new SendMessageRequest(Input_Queue_Url, id+" "+br.readLine()));	
+				id++;
+			}	
+			br.close() ;
+			id=id-1;
+			
+			// Check Response queue for completion of Jobs.
+			GetQueueAttributesRequest request1 = new GetQueueAttributesRequest();
+	        request1 = request1.withAttributeNames("ApproximateNumberOfMessages");
+	        	      
+	        request1 = request1.withQueueUrl(response_Queue_Url);	 
+	        Map<String, String> attrs = connect_Sqs.getQueueAttributes(request1).getAttributes();
+	        int messages_in_queue = Integer.parseInt(attrs.get("ApproximateNumberOfMessages"));
+
+	        // get the approximate number of messages in the queue	        
+	        //System.out.println("Queue Size is:- "+messages_in_queue);    
+			System.out.println("Checking if execution complete !!!!");
+	        while(messages_in_queue<id)
+	        {
+	            sleep(500);
+	            request1 = new GetQueueAttributesRequest();
+		        request1 = request1.withAttributeNames("ApproximateNumberOfMessages");
+		        
+		        //int max = 25;
+	   
+		        request1 = request1.withQueueUrl(response_Queue_Url);
+
+		        attrs = connect_Sqs.getQueueAttributes(request1).getAttributes();
+
+		        // get the approximate number of messages in the queue
+		        messages_in_queue = Integer.parseInt(attrs.get("ApproximateNumberOfMessages"));
+		        //System.out.println("Queue Size is:- "+messages_in_queue);		       
+	        }   
+	        
+	        if(messages_in_queue==id)
+	        {
+	        	System.out.println("All Messages Processed !!!");
+	        }
+	        else
+	        {
+	        	//System.out.println("Few Messages Not Processed !!!");
+	        }
+           // System.out.println("Deleting both queues.\n");
+			end_Time   = System.currentTimeMillis();		// Stop timer.
+           // connect_Sqs.deleteQueue(new DeleteQueueRequest(Input_Queue_Url));
+            //connect_Sqs.deleteQueue(new DeleteQueueRequest(response_Queue_Url));
+			
+            System.out.println("Execution Complete !!!");
+        	}
+        	catch(Exception e)
+        	{
+        		e.printStackTrace();
+        	}
+        }		 
+	public static void main(String args[]) throws Exception
+	{	
+		try
+		{	
+			Qname=args[1];
+			
+			// Start Timer
+			//long start_Time = System.currentTimeMillis();
+			Path currentRelativePath = Paths.get("");
+			String current_working_directory = currentRelativePath.toAbsolutePath().toString();			
+			file_name = current_working_directory+"/"+args[3];
+						
+			credentils_file=current_working_directory+"/credentials";
+			
+			Animoto_Client lc=new Animoto_Client();			
+			lc.execute_DynamoDB();			// Call execute_DynamoDB Method.
+			lc.insert_in_SQS();				// Call insert_in_SQS method.
+			
+			
+			// End Timer			
+			long total_Time = end_Time - start_Time;
+			
+			// Print time taken for execution.
+			System.out.println("Start time is:- "+start_Time);			
+			System.out.println("Total Time taken for execution (In Milliseconds)"+total_Time);			
+		}	
+		catch(Exception e)
+		{
+			e.printStackTrace();
+		}
+	}
+}
+
+Animoto_Worker:-
+import java.util.*;
+import java.util.Map.Entry;
+import java.io.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.sqs.model.GetQueueUrlResult;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.auth.profile.ProfilesConfigFile;
+import com.amazonaws.regions.Region;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.model.*;
+/*import com.amazonaws.services.dynamodbv2.model.AttributeValue;
+import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
+import com.amazonaws.services.dynamodbv2.model.Condition;
+import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
+import com.amazonaws.services.dynamodbv2.model.PutItemResult;
+import com.amazonaws.services.dynamodbv2.model.ScanRequest;
+import com.amazonaws.services.dynamodbv2.model.ScanResult;*/
+import com.amazonaws.services.sqs.AmazonSQS;
+import com.amazonaws.services.sqs.AmazonSQSClient;
+import com.amazonaws.services.sqs.model.*;
+/*import com.amazonaws.services.sqs.model.DeleteMessageRequest;
+import com.amazonaws.services.sqs.model.Message;
+import com.amazonaws.services.sqs.model.ReceiveMessageRequest;
+import com.amazonaws.services.sqs.model.GetQueueAttributesRequest;
+import com.amazonaws.services.sqs.model.SendMessageRequest;
+import com.amazonaws.services.sqs.model.QueueDoesNotExistException;*/
+import com.amazonaws.services.s3.model.PutObjectRequest;
+
+class Animoto_Worker extends Thread 			// Declare Animoto_Worker class
+{	
+	String thread_name=null,Qname=null;
+	static volatile long id=0;
+	AmazonS3 connect_s3;						// Variable Declaration section.
+	String bucketName;
+	String key;
+	static String credentils_file=null;
+	static AmazonDynamoDBClient connect_dynamoDB;  
+	Animoto_Worker()					// default constructor.
+	{
+	}
+	Animoto_Worker(String thread_name,String Qname) // Parametarized Constructor.
+	{
+		this.thread_name=thread_name;
+		this.Qname=Qname;
+	}
+	 public void create_Bucket()			// Create S3 bucket.
+	 {
+		 	
+		 AWSCredentials get_credentials = null;	
+	        try 
+	        {
+	        	// Get access to profile.
+	        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+	            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+	        } 
+	        catch (Exception e)  // Exception handling. 
+	        {
+	        		throw new AmazonClientException("Cannot load the credentials from the credential profiles file. " +
+	                    "Please make sure that your get_credentials file is at the correct location" ,
+	                    e);
+	        }	        
+	        
+	        connect_s3 = new AmazonS3Client(get_credentials); 
+	        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+	        connect_s3.setRegion(us_West2);
+
+	        bucketName = "pa3videostorage" + UUID.randomUUID();  // Create Bucket.
+	        key = "MyVideo";									// Video key.
+	        		 
+	     System.out.println("-----Connect Amazon S3-----");
+	   	     
+	     try 
+	     {	           
+	            System.out.println("Connecting to bucket " + bucketName + "\n");
+	            connect_s3.createBucket(bucketName);	  					// Create Bucket          	            	         
+	     }
+	 catch(Exception e)		// Exception Handling
+	 {
+		  e.printStackTrace();
+	 }	 
+	 }
+	synchronized public void run()		// This method is called by every thread.
+	{		
+		try
+		{
+			create_Bucket();			// Call create_Bucket method
+			execute_jobs();				// Call execute_jobs method
+		}			
+		catch(Exception e)				// exception Handling.
+		{			
+			e.printStackTrace();
+		}
+	}
+	private static void initializer() throws Exception 
+	{        
+        AWSCredentials get_credentials = null;
+        try {
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();  
+        } catch (Exception e) {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        connect_dynamoDB = new AmazonDynamoDBClient(get_credentials);
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_dynamoDB.setRegion(us_West2);
+    }
+	
+	public void execute_jobs() throws Exception
+	{
+		// Connect All Queues				
+		AWSCredentials get_credentials = null;		
+		String str_response_Queue_Url=null;
+		AmazonSQS connect_Sqs=null;
+		int task_counter=0;
+		String output_file_name=null;
+		int total_jobs=10;
+		int No_Of_Files=60;
+		int job_counter=0;
+        try 
+        {
+        	// connect 
+        	ProfilesConfigFile pcf=new ProfilesConfigFile(credentils_file);
+            get_credentials = new ProfileCredentialsProvider(pcf,"default").getCredentials();
+        } 
+        catch (Exception e)   // exception handling. 
+        {
+            throw new AmazonClientException(
+                    "Cannot load the credentials from the credential profiles file. " +
+                    "Please make sure that your get_credentials file is at the correct location" ,
+                    e);
+        }
+        try
+        {
+        String tableName="Animoto_Job_Id";	 // DynamoDb table name.        
+        //Map<String, AttributeValue> DynamoDB_item;
+        initializer();
+        connect_Sqs = new AmazonSQSClient(get_credentials);			//  get credentials to connect SQS
+        Region us_West2 = Region.getRegion(Regions.US_WEST_2);
+        connect_Sqs.setRegion(us_West2);
+               
+        System.out.println("-----Connecting Amazon SQS-----\n");        
+        
+        // Connect incoming Queue.
+        System.out.println("Connecting to "+Qname+" Queue");
+        GetQueueUrlResult incoming_Queue_Url = connect_Sqs.getQueueUrl(Qname); 
+        String str_incoming_Queue_Url =incoming_Queue_Url.getQueueUrl();
+        System.out.println("Url is:- "+str_incoming_Queue_Url);
+      
+        // Connect Response_Queue Queue.
+		System.out.println("Connecting to Response_Queue !!");
+		GetQueueUrlResult response_Queue_Url = connect_Sqs.getQueueUrl("Animoto_Response_Queue");
+	    str_response_Queue_Url =response_Queue_Url.getQueueUrl();
+	    System.out.println("Url is:- "+str_response_Queue_Url);
+		
+	    // Connect DynamoDB
+	    System.out.println("Connecting to DynamoDB !!");	    
+	    Map<String, AttributeValue> DynamoDB_item;
+        PutItemRequest put_Item_Request;
+        PutItemResult put_Item_Result;
+        //System.out.println("Result: " + put_Item_Result);
+               
+        GetQueueAttributesRequest requester = new GetQueueAttributesRequest();
+        requester = requester.withAttributeNames("ApproximateNumberOfMessages");
+        String command=null;
+        Process exe_Process=null;
+        int last_index=0;
+        String file_name=null;
+               
+        String message_Receipt_Handle=null;
+        HashMap<String, Condition> scan_Filter;
+        Condition dynamoDB_condition;
+        ScanRequest dynamoDB_scan_Request;
+        ScanResult dynamoDB_scan_Result;        
+        int val=0;       
+        requester = requester.withQueueUrl(str_incoming_Queue_Url);
+        String message_body=null;                
+        // get the approximate number of queue_Messages in the input_Queue                          
+        System.out.println("Started executing jobs !!");
+        task_counter=0;        
+        while(job_counter<total_jobs)     
+        {               	
+        	job_counter++;
+        	output_file_name="Job_"+job_counter+".mpg";
+        	task_counter=1;
+        	val=0;
+        	ReceiveMessageRequest message_Request = new ReceiveMessageRequest(str_incoming_Queue_Url);
+    		List<Message> queue_Messages = connect_Sqs.receiveMessage(message_Request).getMessages();
+    		for (Message message : queue_Messages) {
+    		//	System.out.println("  Message");
+    		//	System.out.println("    MessageId:     " + message.getMessageId());
+    		//	System.out.println("    ReceiptHandle: " + message.getReceiptHandle());
+    		//	System.out.println("    MD5OfBody:     " + message.getMD5OfBody());
+    			message_body=message.getBody();
+    			//System.out.println("    Body:          " + message_body);
+    			for (Entry<String, String> entry : message.getAttributes().entrySet()) {
+    			//	System.out.println("  Attribute");
+    			//	System.out.println("    Name:  " + entry.getKey());
+    			//	System.out.println("    Value: " + entry.getValue());
+    			}
+    		}      		
+            String Id_of_command = message_body.substring(0,message_body.indexOf(" "));
+            int id_cmd=Integer.parseInt(Id_of_command);
+            String Command_str=message_body.substring(message_body.indexOf(" ")+1);
+            //System.out.println("Id is"+id_cmd+"command"+Command_str);
+            
+            scan_Filter = new HashMap<String, Condition>();
+            dynamoDB_condition = new Condition()
+                .withComparisonOperator(ComparisonOperator.EQ.toString())
+                .withAttributeValueList(new AttributeValue().withN(Id_of_command));
+            scan_Filter.put("Id", dynamoDB_condition);
+            dynamoDB_scan_Request = new ScanRequest(tableName).withScanFilter(scan_Filter);
+            dynamoDB_scan_Result = connect_dynamoDB.scan(dynamoDB_scan_Request);
+            
+            //System.out.println("DynamoDb check "+ dynamoDB_scan_Result);
+            val=dynamoDB_scan_Result.getCount();
+            //System.out.println("Records Found "+val);
+            
+            if(val==0) /// If records does not present insert it dynamodDB  
+            {
+            	message_Receipt_Handle = queue_Messages.get(0).getReceiptHandle();
+                connect_Sqs.deleteMessage(new DeleteMessageRequest(str_incoming_Queue_Url, message_Receipt_Handle));   
+                
+            	DynamoDB_item = Add_item(id_cmd,Command_str);
+                put_Item_Request = new PutItemRequest(tableName, DynamoDB_item);
+                put_Item_Result = connect_dynamoDB.putItem(put_Item_Request);
+              //  System.out.println("Result: " + put_Item_Result);                
+                //connect_Sqs.sendMessage(new SendMessageRequest(str_response_Queue_Url,Command_str ));
+               // System.out.println("x"+Command_str+"z");
+                FileReader fr=new FileReader(Command_str);  // Open file which has images link.
+                BufferedReader br=new BufferedReader(fr);
+                                
+                while(task_counter<=No_Of_Files)		// Download images from google. 
+            	{    
+                	Command_str=br.readLine();            	
+                	command="wget "+Command_str;
+        			exe_Process = Runtime.getRuntime().exec(command);   // Excecute wget command.
+        			exe_Process.waitFor();
+        		
+        			last_index=Command_str.lastIndexOf('/');
+        			file_name=Command_str.substring(last_index+1);     // get file name .
+        		//	System.out.println("file_name:- "+file_name);        			
+        		
+        			command="mv "+file_name+" img"+task_counter+".jpg";  // Rename file.
+        			exe_Process = Runtime.getRuntime().exec(command);
+        			task_counter++;
+            	}   
+                br.close();
+            }               	
+        	         
+        command="ffmpeg -f image2 -i img%d.jpg "+output_file_name;    // This command will create video file from images.
+        //command="ffmpeg -framerate 1/5 -i img%d.jpg -c:v libx264 -r 30 -pix_fmt yuv420p "+output_file_name;
+        exe_Process = Runtime.getRuntime().exec(command); 			// Execute command. 
+		exe_Process.waitFor();										// Wait for command to finish.
+		File f1=null;							
+		command="rm *.jpg";											// Remove file. 
+		exe_Process = Runtime.getRuntime().exec(command); 	
+		exe_Process.waitFor();							
+        System.out.println("Uploading "+output_file_name+" to S3 !!!");
+        f1=new File(output_file_name);								// Open video file.
+        connect_s3.putObject(new PutObjectRequest(bucketName, "Job_"+job_counter+"_Video", f1));  // Upload video file to s3.
+        String Video_url=((AmazonS3Client) connect_s3).getResourceUrl(bucketName,"Job_"+job_counter+"_Video");
+        System.out.println(Video_url);
+        connect_Sqs.sendMessage(new SendMessageRequest(str_response_Queue_Url,Video_url ));   // Get the Video url and put it in response Queue.
+        
+		System.out.println("Video File is ready  !!");
+        }
+        }
+        catch(IndexOutOfBoundsException iobe)  // Exception handling.
+        {        	        
+        	String command;
+        	Process exe_Process;
+        	System.out.println("record_counter "+task_counter);
+        	File f;
+          /*f=new File("img"+task_counter+".jpg");
+            f.delete();*/
+            
+        	command="ffmpeg -f image2 -i img%d.jpg "+output_file_name;        	
+        	//command="ffmpeg -framerate 1/5 -i img%d.jpg -c:v libx264 -r 30 -pix_fmt yuv420p "+output_file_name;
+     		exe_Process = Runtime.getRuntime().exec(command); 
+     		exe_Process.waitFor();
+     		/*f=new File("img"+task_counter+".jpg");
+            f.delete();*/
+     		command="rm *.jpg";
+     		exe_Process = Runtime.getRuntime().exec(command); 	
+     		exe_Process.waitFor();
+     		//command="rm *.jpg";     				
+     		
+     		exe_Process.waitFor();
+            System.out.println("Uploading "+output_file_name+" to S3 !!!");
+            f=new File(output_file_name);
+            connect_s3.putObject(new PutObjectRequest(bucketName, "Job_"+job_counter+"_Video", f));            
+            String Video_url=((AmazonS3Client) connect_s3).getResourceUrl(bucketName,key);
+            System.out.println(Video_url);
+            connect_Sqs.sendMessage(new SendMessageRequest(str_response_Queue_Url,Video_url ));
+           
+    		System.out.println("Video File is ready  !!");
+        }
+        catch(QueueDoesNotExistException qdne)
+        {
+        	
+        }
+	}	
+	private static Map<String, AttributeValue> Add_item(int Id, String Command)  // this method will add item to dynamoDB.
+	{
+        Map<String, AttributeValue> DynamoDB_item = new HashMap<String, AttributeValue>();
+        DynamoDB_item.put("Id", new AttributeValue(Integer.toString(Id)));
+        DynamoDB_item.put("Command", new AttributeValue(Command));        
+        return DynamoDB_item;  
+    }
+	public static void main(String args[]) throws Exception
+	{	
+		Thread t[]=new Thread[20];
+		int no_of_threads=Integer.parseInt(args[3]);
+		Path currentRelativePath = Paths.get("");
+		String current_working_directory = currentRelativePath.toAbsolutePath().toString();
+		credentils_file=current_working_directory+"/credentials";
+					
+		//System.out.println("no_of_threads "+no_of_threads+"Qname "+args[2]);
+		try
+		{			
+			for(int i=1;i<=no_of_threads;i++)           // Create threads.
+			{
+				t[i]=new Animoto_Worker("Thread"+i,args[1]);
+				t[i].start(); 
+			}
+			for (int i=1;i<=no_of_threads;i++) 							 
+			{
+				t[i].join();											// wait till thread completes its execution.
+			}									
+		}	
+		catch(Exception e)			// Exception handling.
+		{
+			e.printStackTrace();
+		}
+	}
+}
+
+
